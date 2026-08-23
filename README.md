@@ -96,43 +96,121 @@ parkinsons-voice-classification/
 │   └── final_project_report.pdf
 ├── install_packages.R
 └── .gitignore
+```
 
 ## Data
 
-The analysis uses speech features spanning baseline measures, intensity, bandwidth/formant measures, vocal-fold measures, MFCCs, wavelet-transform features, and TQWT features. The outcome is binary: `0 = non-PD`, `1 = PD`.
+The analysis uses quantitative speech features derived from multiple feature families, including:
 
-The course-provided train/test data are intentionally omitted from this public-ready repository. If you have permission to redistribute them, place the files in `data/` as:
+- Baseline voice measures
+- Intensity-based features
+- Bandwidth and formant features
+- Vocal-fold features
+- Mel-Frequency Cepstral Coefficients (MFCC)
+- Wavelet-transform (WT) features
+- Tunable Q-factor Wavelet Transform (TQWT) features
+
+The binary outcome is coded as:
+
+- `0` = Non-PD
+- `1` = PD
+
+The training and test datasets used in this analysis are provided in the `data/` directory to support reproducibility of the project.
+
+The analysis uses the following source data files:
 
 ```text
 data/pd_speech_features_trainPh1976.csv
 data/pd_speech_features_test_with-no-label_Ph1976.csv
 ```
 
-## Running the analysis
+## Running the Analysis
 
-Open `analysis/parkinsons_voice_classification.Rmd` in RStudio and knit/run from the repository root. The analysis uses these R packages:
+The analysis was conducted in **R** using **R Markdown**.
+
+Open:
+
+```text
+analysis/parkinsons_voice_classification.Rmd
+```
+
+in RStudio and run the analysis from the repository root.
+
+Required R packages can be installed using:
 
 ```r
 install.packages(c(
-  "tidyverse", "corrplot", "caret", "pROC", "randomForest",
-  "e1071", "glmnet", "kernlab", "nnet"
+  "tidyverse",
+  "corrplot",
+  "caret",
+  "pROC",
+  "randomForest",
+  "e1071",
+  "glmnet",
+  "kernlab",
+  "nnet"
 ))
 ```
 
-The pipeline writes processed datasets to `data/` and final predictions to `outputs/predictions.csv`.
+The workflow generates processed datasets within the local `data/` directory and writes final subject-level predictions to:
 
-## Key methods demonstrated
+```text
+outputs/predictions.csv
+```
 
-R, R Markdown, exploratory data analysis, feature engineering, multicollinearity filtering, standardization, PCA, cross-validation, class-imbalance handling, penalized logistic regression, random forest, SVM, neural networks, ROC/AUC analysis, confusion matrices, threshold analysis, and variable importance.
+## Methods and Skills Demonstrated
+
+This project demonstrates experience with:
+
+- R
+- R Markdown
+- Statistical learning
+- Machine learning
+- Exploratory data analysis
+- High-dimensional biomedical data
+- Feature engineering and preprocessing
+- Multicollinearity assessment
+- Correlation-based feature selection
+- Data standardization
+- Principal component analysis (PCA)
+- Cross-validation
+- Class-imbalance handling
+- Penalized logistic regression
+- Ridge and lasso regularization
+- Random Forest
+- Support Vector Machines
+- Neural networks
+- Hyperparameter tuning
+- ROC/AUC analysis
+- Confusion-matrix metrics
+- Sensitivity and specificity analysis
+- Threshold analysis
+- Model comparison
+- Variable importance
+
+## Limitations
+
+Several limitations should be considered when interpreting the results:
+
+- The dataset contained substantially more PD than non-PD participants.
+- The relatively small subject-level sample size increases the potential for overfitting, particularly for more complex models.
+- Hyperparameter optimization was not exhaustive.
+- The MLP architecture was not extensively tuned because of sample-size and computational considerations.
+- Model performance was assessed through cross-validation, but **external validation on an independent dataset was not performed**.
+
+Therefore, the models should be interpreted as an applied statistical-learning exercise rather than as clinically validated diagnostic tools.
 
 ## Authors
 
-- Parminder Singh Kooner
+- **Parminder Singh Kooner**
 - Huiying Hu
 - Syeda Akter
 
-Graduate course project, UTHealth Houston School of Public Health, Department of Biostatistics and Data Science (2026).
+Graduate course project completed as part of **Fundamentals of Data Analytics and Predictions (PH 1976L)** at the **UTHealth Houston School of Public Health, Department of Biostatistics and Data Science (2026)**.
 
+## References
+
+Sakar, B. E., Isenkul, M. E., Sakar, C. O., Sertbas, A., Gurgen, F., Delil, S., Apaydin, H., & Kursun, O. (2019). Collection and analysis of a Parkinson speech dataset with multiple types of sound recordings. *IEEE Journal of Biomedical and Health Informatics, 23*(5), 2146–2154.
+
+James, G., Witten, D., Hastie, T., & Tibshirani, R. (2021). *An Introduction to Statistical Learning: With Applications in R* (2nd ed.). Springer.
 ## Academic-use note
-
-This repository is a cleaned, portfolio-oriented version of a collaborative course project. Verify dataset redistribution permissions and obtain collaborator approval before making any course-provided data or jointly authored materials public.
