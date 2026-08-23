@@ -1,46 +1,87 @@
 # Predicting Parkinson's Disease Using Voice Recordings
 
-A supervised machine-learning project for classifying Parkinson's disease (PD) status from quantitative features extracted from voice recordings.
+A supervised machine-learning project for predicting and classifying **Parkinson's disease (PD) status** using quantitative features extracted from voice recordings.
 
-## Project overview
+## Project Overview
 
-Parkinson's disease can affect vocal characteristics, making speech-derived features a potential source of information for non-invasive classification. This project evaluates several statistical-learning and machine-learning approaches for distinguishing PD from non-PD participants using high-dimensional voice features.
+Parkinson's disease can affect vocal characteristics, making speech-derived features a potential source of information for non-invasive classification. This project evaluates several statistical-learning and machine-learning approaches for distinguishing individuals with PD from those without PD using high-dimensional voice features.
 
-The original dataset contains **252 subjects**, each with **three voice recordings**. The analysis averages the three recordings to create one subject-level feature vector. In the course split used for modeling, this yielded **201 training subjects** and **51 test subjects** after aggregation.
+The original dataset contains **252 subjects**, each with **three voice recordings**, resulting in 756 recording-level observations. The three recordings were aggregated by averaging each feature within subject, producing **201 training subjects** and **51 held-out test subjects** for modeling.
 
-## Analysis workflow
+The analysis focuses on preprocessing high-dimensional speech data, addressing class imbalance and multicollinearity, comparing multiple classification algorithms, and evaluating their ability to discriminate between PD and non-PD participants.
 
-1. Aggregate three recordings per subject by taking the mean of each feature.
-2. Explore class balance, feature distributions, and correlations.
-3. Remove near-zero-variance predictors.
-4. Create a correlation-filtered feature set for penalized logistic regression.
-5. Standardize predictors using parameters estimated from the training set only.
-6. Use PCA for visualization and for dimensionality reduction before the neural network.
-7. Train models with **5-fold cross-validation** and **up-sampling** to address class imbalance.
-8. Compare models using AUC, accuracy, sensitivity, specificity, precision, and F1-score.
-9. Generate subject-level predictions for the held-out test set.
+## Objectives
 
-## Models evaluated
+The primary objectives of this project were to:
 
-- Penalized logistic regression (ridge/lasso via `glmnet`)
-- Random forest
-- Support vector machine with radial kernel
-- Multilayer perceptron (MLP) after PCA
+- Preprocess repeated voice recordings into subject-level observations
+- Explore class balance, feature distributions, and correlations
+- Reduce redundancy among high-dimensional speech features
+- Compare statistical and machine-learning classification approaches
+- Address class imbalance during model training
+- Evaluate predictive performance using multiple classification metrics
+- Generate predictions for a held-out test dataset
 
-## Cross-validated results
+## Analysis Workflow
+
+1. **Aggregate repeated recordings**  
+   Average the three voice recordings for each participant to create one subject-level feature vector.
+
+2. **Conduct exploratory data analysis**  
+   Examine class distribution, selected feature distributions, and correlations among speech features.
+
+3. **Remove near-zero-variance predictors**  
+   Screen predictors for features containing little or no variability.
+
+4. **Address multicollinearity**  
+   Apply correlation-based feature filtering using a cutoff of **|r| > 0.90**, reducing the feature space from **753 to 353 predictors** for penalized logistic regression.
+
+5. **Standardize predictors**  
+   Apply z-score normalization using parameters estimated from the training data only to prevent data leakage.
+
+6. **Perform principal component analysis (PCA)**  
+   Use PCA to visualize the high-dimensional feature space and for dimensionality reduction before neural-network modeling.
+
+7. **Train classification models**  
+   Use **5-fold cross-validation** for model training and hyperparameter tuning, with **up-sampling within training folds** to address class imbalance.
+
+8. **Evaluate model performance**  
+   Compare models using AUC, accuracy, sensitivity, specificity, precision, and F1-score.
+
+9. **Generate held-out predictions**  
+   Apply the trained modeling pipeline to the unlabeled test dataset to generate subject-level PD predictions.
+
+## Models Evaluated
+
+Four supervised classification approaches were compared:
+
+- **Penalized Logistic Regression** — ridge/lasso regularization using `glmnet`
+- **Random Forest** — ensemble tree-based classification
+- **Support Vector Machine (SVM)** — radial basis function kernel
+- **Multilayer Perceptron (MLP)** — feedforward neural network following PCA-based dimensionality reduction
+
+## Cross-Validated Results
 
 | Model | AUC | Accuracy | Sensitivity | Specificity | Precision | F1 |
 |---|---:|---:|---:|---:|---:|---:|
-| Logistic regression | **0.859** | 0.811 | 0.840 | **0.725** | 0.900 | **0.869** |
-| Random forest | 0.842 | **0.816** | 0.940 | 0.451 | 0.834 | 0.884 |
+| **Logistic Regression** | **0.859** | 0.811 | 0.840 | **0.725** | 0.900 | 0.869 |
+| Random Forest | 0.842 | **0.816** | 0.940 | 0.451 | 0.834 | **0.884** |
 | SVM | 0.797 | 0.810 | **0.967** | 0.314 | 0.806 | 0.879 |
 | MLP | 0.816 | 0.756 | 0.800 | 0.627 | 0.863 | 0.830 |
 
-Penalized logistic regression achieved the highest AUC and the most balanced sensitivity/specificity profile. Random forest and SVM were more sensitive to PD cases but produced substantially lower specificity.
+## Key Findings
 
-> **Important implementation note:** The original course code generated the final held-out test predictions using the random forest model, even though logistic regression had the highest cross-validated AUC. This repository preserves that modeling decision rather than silently changing the submitted analysis.
+- **Penalized logistic regression achieved the highest AUC (0.859)** and provided the strongest overall balance between sensitivity and specificity.
+- **Random Forest and SVM achieved higher sensitivity** for identifying PD cases but at the cost of substantially lower specificity.
+- The training dataset was imbalanced, with approximately **74.6% PD and 25.4% non-PD subjects**, reinforcing the importance of evaluating sensitivity, specificity, and AUC rather than relying on accuracy alone.
+- Correlation filtering reduced the predictor set from **753 to 353 features**, demonstrating substantial redundancy within the high-dimensional speech feature space.
+- PCA showed that approximately **36 principal components were required to explain 80% of the variance**, highlighting the multidimensional structure of the voice-feature data.
+- Random Forest feature-importance analysis identified several **delta-energy and TQWT-based features** among the strongest predictors of PD classification.
+- Overall, the results demonstrated that a relatively interpretable, regularized statistical model could perform as well as or better than more flexible machine-learning approaches for this dataset.
 
-## Repository structure
+Final held-out test predictions were generated using the **Random Forest model**, consistent with the implementation used in the original course analysis.
+
+## Repository Structure
 
 ```text
 parkinsons-voice-classification/
@@ -53,8 +94,8 @@ parkinsons-voice-classification/
 │   └── predictions.csv
 ├── docs/
 │   └── final_project_report.pdf
+├── install_packages.R
 └── .gitignore
-```
 
 ## Data
 
