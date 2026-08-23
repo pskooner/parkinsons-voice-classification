@@ -89,6 +89,8 @@ parkinsons-voice-classification/
 ├── analysis/
 │   └── parkinsons_voice_classification.Rmd
 ├── data/
+│   ├── pd_speech_features_trainPh1976.csv
+│   ├── pd_speech_features_test_with-no-label_Ph1976.csv
 │   └── README.md
 ├── outputs/
 │   └── predictions.csv
