@@ -205,8 +205,6 @@ Therefore, the models should be interpreted as an applied statistical-learning e
 ## Authors
 
 - **Parminder Singh Kooner**
-- Huiying Hu
-- Syeda Akter
 
 Graduate course project completed as part of **Fundamentals of Data Analytics and Predictions (PH 1976L)** at the **UTHealth Houston School of Public Health, Department of Biostatistics and Data Science (2026)**.
 
