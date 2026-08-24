@@ -11,11 +11,12 @@ analysis/*.html
 analysis/*.docx
 analysis/*.pdf
 
-# Course-provided or derived datasets (verify redistribution permission before tracking)
-data/*.csv
-data/*.RData
-data/*.xlsx
-!data/README.md
+# Generated/processed datasets
+data/pd_train_v1.csv
+data/pd_test_v1.csv
+data/pd_train_v2.csv
+data/pd_test_v2.csv
+data/pd_preprocessed.RData
 
 # OS files
 .DS_Store
