@@ -1,0 +1,664 @@
+---
+title: "Kooner_Hu_Akter_PH1976L_Final_Project"
+date: "`r Sys.Date()`"
+output:
+  word_document: default
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_knit$set(root.dir = "C:/Users/HP/OneDrive/Documents/UT Health Houston - MS Biostatistics/Spring 2026/PH 1976L - Data Analytics and Prediction/Project")
+```
+
+## The University of Texas Health Science Center at Houston (UT Health Houston)
+
+Student Name: Huiying Hu (2098156), Parminder Singh Kooner (2108565), Syeda Akter (2086337)       
+Course Name: Fundamentals of Data Analytics and Predictions  
+Course Code: PH 1976L-100  
+
+A final project R markdown script submitted in partial fulfillment of the requirements for course PH 1976L: Fundamentals of Data Analytics and Predictions  
+
+## Final Project Code Script with Comments             
+
+Submitted To: Ashraf Yaseen  
+Submission Date: April 23, 2026  
+
+The University of Texas Health Science Center at Houston (UT Health Houston)  
+School of Public Health  
+Department of Biostatistics and Data Science  
+1200 Pressler St, Houston, TX 77030  
+2026           
+
+```{r libraries}
+# Core modeling packages
+library(tidyverse)
+library(corrplot)
+library(caret) # For re-sampling and tuning
+library(pROC) # ROC + AUC
+library(dplyr)
+library(randomForest) # Tree-based methods
+library(e1071) # SVM
+library(glmnet) # Regularization
+library(kernlab)
+```
+
+## 1. Load Data
+
+```{r load}
+train_raw <- read.csv("pd_speech_features_trainPh1976.csv")
+test_raw  <- read.csv("pd_speech_features_test_with-no-label_Ph1976.csv")
+```
+
+## 2. Aggregate Recordings
+
+Each subject has 3 recordings. We average them to get one row per subject.
+
+```{r aggregate}
+feat_cols <- setdiff(names(train_raw), c("id", "class"))
+
+train_agg <- train_raw %>%
+  group_by(id) %>%
+  summarise(across(all_of(feat_cols), mean), class = first(class), .groups = "drop")
+
+test_agg <- test_raw %>%
+  group_by(id) %>%
+  summarise(across(setdiff(names(test_raw), c("id", "class")), mean), .groups = "drop")
+
+cat(nrow(train_agg), "train subjects,", nrow(test_agg), "test subjects\n")
+cat("Missing values - train:", sum(is.na(train_agg)), " test:", sum(is.na(test_agg)), "\n")
+```
+
+## 3. EDA
+
+### Class distribution
+
+```{r class-dist, fig.width=4, fig.height=3}
+train_agg %>%
+  count(class) %>%
+  mutate(class = factor(class, labels = c("Non-PD", "PD")),
+         pct = round(100 * n / sum(n), 1)) %>%
+  ggplot(aes(x = class, y = n, fill = class)) +
+  geom_bar(stat = "identity", width = 0.5) +
+  geom_text(aes(label = paste0(n, " (", pct, "%)")),
+            vjust = -0.5, size = 3.5) +
+  scale_fill_manual(values = c("Non-PD" = "#4393C3", "PD" = "#D6604D")) +
+  scale_y_continuous(expand = expansion(mult = c(0, 0.12))) + 
+  coord_cartesian(clip = "off") +
+  labs(title = "Class Distribution", x = NULL, y = "Count") +
+  theme_bw() +
+  theme(legend.position = "none")
+```
+
+The training set is imbalanced (~75% PD vs ~25% non-PD). Models should be evaluated using AUC and Sensitivity rather than accuracy alone.
+
+### Feature distributions by class
+
+```{r feat-dist, fig.width=10, fig.height=5}
+selected <- c("PPE", "meanIntensity", "f1", "GNE_mean",
+              "mean_MFCC_1st_coef", "Ea", "tqwt_energy_dec_1")
+
+train_agg %>%
+  select(class, all_of(selected)) %>%
+  mutate(class = factor(class, labels = c("Non-PD", "PD"))) %>%
+  pivot_longer(-class) %>%
+  ggplot(aes(x = value, fill = class)) +
+  geom_density(alpha = 0.5) +
+  facet_wrap(~name, scales = "free", ncol = 4) +
+  scale_fill_manual(values = c("Non-PD" = "#4393C3", "PD" = "#D6604D")) +
+  labs(title = "Feature Distributions by Class", x = NULL, y = "Density", fill = "Class") +
+  theme_bw()
+```
+
+### Correlation among baseline features
+
+```{r corr, fig.width=7, fig.height=6}
+baseline <- c("PPE", "DFA", "RPDE", "numPulses", "numPeriodsPulses",
+              "meanPeriodPulses", "stdDevPeriodPulses",
+              "locPctJitter", "locAbsJitter", "rapJitter",
+              "ppq5Jitter", "ddpJitter", "locShimmer", "locDbShimmer",
+              "apq3Shimmer", "apq5Shimmer", "apq11Shimmer", "ddaShimmer",
+              "meanAutoCorrHarmonicity", "meanNoiseToHarmHarmonicity",
+              "meanHarmToNoiseHarmonicity")
+
+corrplot(cor(train_agg[, baseline]),
+         method = "color", type = "upper", tl.cex = 0.6, tl.col = "black",
+         col = colorRampPalette(c("#4393C3", "white", "#D6604D"))(200),
+         title = "Correlation Matrix - Baseline Features", mar = c(0,0,2,0))
+```
+
+## 4. Feature Selection
+
+### Near-zero variance filtering
+
+```{r nzv}
+X_train <- train_agg %>% select(-id, -class)
+X_test  <- test_agg  %>% select(-id)
+
+nzv_cols <- colnames(X_train)[nearZeroVar(X_train)]
+cat("NZV features removed:", length(nzv_cols), "\n")
+
+X_train_nzv <- X_train %>% select(-all_of(nzv_cols))
+X_test_nzv  <- X_test  %>% select(-all_of(nzv_cols[nzv_cols %in% names(X_test)]))
+cat("Features remaining (v1):", ncol(X_train_nzv), "\n")
+```
+
+### High-correlation filtering (for logistic regression)
+
+Highly correlated features can destabilize linear models (ISLR Ch.6). We create a second feature set with an additional correlation filter (cutoff = 0.90) specifically for logistic regression.
+
+```{r highcorr}
+hc_cols <- colnames(X_train_nzv)[findCorrelation(cor(X_train_nzv), cutoff = 0.90)]
+cat("High-correlation features removed:", length(hc_cols), "\n")
+
+X_train_hc <- X_train_nzv %>% select(-all_of(hc_cols))
+X_test_hc  <- X_test_nzv  %>% select(-all_of(hc_cols[hc_cols %in% names(X_test_nzv)]))
+cat("Features remaining (v2):", ncol(X_train_hc), "\n")
+```
+
+### Variance distribution
+
+```{r var-plot, fig.width=7, fig.height=3}
+data.frame(
+  var     = apply(X_train, 2, var),
+  removed = names(X_train) %in% c(nzv_cols, hc_cols)
+) %>%
+  ggplot(aes(x = log10(var + 1e-10), fill = removed)) +
+  geom_histogram(bins = 50, alpha = 0.8, position = "identity") +
+  scale_fill_manual(values = c("FALSE" = "#4393C3", "TRUE" = "#D6604D"),
+                    labels = c("Retained", "Removed")) +
+  labs(title = "Feature Variance (log10)", x = "log10(Variance)", y = "Count", fill = "") +
+  theme_bw()
+```
+
+## 5. Normalization
+
+Z-score standardization fitted on training set only to avoid data leakage (ISLR Ch.5).
+
+```{r normalize}
+# v1: NZV only (for RF, SVM, MLP)
+preproc_v1  <- preProcess(X_train_nzv, method = c("center", "scale"))
+train_final_v1 <- bind_cols(train_agg %>% select(id, class), predict(preproc_v1, X_train_nzv))
+test_final_v1  <- bind_cols(test_agg  %>% select(id),        predict(preproc_v1, X_test_nzv))
+
+# v2: NZV + high-correlation filtering (for logistic regression)
+preproc_v2  <- preProcess(X_train_hc, method = c("center", "scale"))
+train_final_v2 <- bind_cols(train_agg %>% select(id, class), predict(preproc_v2, X_train_hc))
+test_final_v2  <- bind_cols(test_agg  %>% select(id),        predict(preproc_v2, X_test_hc))
+
+cat("v1 - train:", nrow(train_final_v1), "x", ncol(train_final_v1),
+    " test:", nrow(test_final_v1), "x", ncol(test_final_v1), "\n")
+cat("v2 - train:", nrow(train_final_v2), "x", ncol(train_final_v2),
+    " test:", nrow(test_final_v2), "x", ncol(test_final_v2), "\n")
+```
+
+## 6. PCA Visualization
+
+PCA is used for visualization only.
+
+```{r pca, fig.width=7, fig.height=4}
+pca <- prcomp(train_final_v1 %>% select(-id, -class), center = FALSE, scale. = FALSE)
+pct <- round(100 * pca$sdev^2 / sum(pca$sdev^2), 1)
+
+data.frame(PC1 = pca$x[,1], PC2 = pca$x[,2],
+           class = factor(train_final_v1$class, labels = c("Non-PD", "PD"))) %>%
+  ggplot(aes(x = PC1, y = PC2, color = class)) +
+  geom_point(alpha = 0.7, size = 2) +
+  stat_ellipse(level = 0.90) +
+  scale_color_manual(values = c("Non-PD" = "#4393C3", "PD" = "#D6604D")) +
+  labs(title = "PCA - PC1 vs PC2",
+       x = paste0("PC1 (", pct[1], "%)"),
+       y = paste0("PC2 (", pct[2], "%)"),
+       color = "Class") +
+  theme_bw()
+```
+
+```{r pca-var, fig.width=7, fig.height=3}
+cumvar <- cumsum(pct)
+cat("PCs for 80% variance:", which(cumvar >= 80)[1], "\n")
+cat("PCs for 95% variance:", which(cumvar >= 95)[1], "\n")
+
+data.frame(PC = seq_along(cumvar), cumvar = cumvar)[1:50,] %>%
+  ggplot(aes(x = PC, y = cumvar)) +
+  geom_line(color = "#4393C3") + geom_point(size = 1.2, color = "#4393C3") +
+  geom_hline(yintercept = c(80, 95), linetype = "dashed", color = c("#D6604D", "gray40")) +
+  labs(title = "Cumulative Variance Explained (Top 50 PCs)",
+       x = "PC", y = "Cumulative Variance (%)") +
+  theme_bw()
+```
+
+## 7. Save Output
+
+```{r save}
+save(train_final_v1, test_final_v1,
+     train_final_v2, test_final_v2,
+     file = "C:/Users/HP/OneDrive/Documents/UT Health Houston - MS Biostatistics/Spring 2026/PH 1976L - Data Analytics and Prediction/Project/pd_preprocessed.RData")
+
+write.csv(train_final_v1, "C:/Users/HP/OneDrive/Documents/UT Health Houston - MS Biostatistics/Spring 2026/PH 1976L - Data Analytics and Prediction/Project/pd_train_v1.csv", row.names = FALSE)
+
+write.csv(test_final_v1,  "C:/Users/HP/OneDrive/Documents/UT Health Houston - MS Biostatistics/Spring 2026/PH 1976L - Data Analytics and Prediction/Project/pd_test_v1.csv", row.names = FALSE)
+
+write.csv(train_final_v2, "C:/Users/HP/OneDrive/Documents/UT Health Houston - MS Biostatistics/Spring 2026/PH 1976L - Data Analytics and Prediction/Project/pd_train_v2.csv", row.names = FALSE)
+
+write.csv(test_final_v2,  "C:/Users/HP/OneDrive/Documents/UT Health Houston - MS Biostatistics/Spring 2026/PH 1976L - Data Analytics and Prediction/Project/pd_test_v2.csv", row.names = FALSE)
+```
+
+Load with `load("pd_preprocessed.RData")`.
+
+- **v1** (`train_final_v1`, `test_final_v1`): NZV only — use for RF, SVM, MLP
+- **v2** (`train_final_v2`, `test_final_v2`): NZV + correlation filter — use for Logistic Regression
+
+`id` is a subject identifier, do not use as a predictor. Outcome variable is `class` (0 = Non-PD, 1 = PD).    
+
+## 8. Model Training Set Up          
+
+```{r}
+set.seed(123) # ensures reproducibility
+
+# Loading clean dataset - Provided by Huiying
+load("pd_preprocessed.RData")
+
+# Basic check of the data
+dim(train_final_v1)
+dim(test_final_v1)
+dim(train_final_v2)
+dim(test_final_v2)
+
+head(train_final_v1[, 1:5])
+head(test_final_v1[, 1:5])
+head(train_final_v2[, 1:5])
+head(test_final_v2[, 1:5])
+
+# Logistic regression dataset (correlation-filtered to avoid multicollinearity)
+train_lr <- train_final_v2
+test_lr  <- test_final_v2
+
+# ML dataset (keeps more features so better for non-linear models)
+train_ml <- train_final_v1
+test_ml  <- test_final_v1
+
+# Convert response variable to factor (Required for classification models, ISL Ch.4)
+train_lr$class <- factor(train_lr$class, levels = c(0,1), labels = c("NoPD","PD"))
+train_ml$class <- factor(train_ml$class, levels = c(0,1), labels = c("NoPD","PD"))
+```
+
+**Notes:**   
+Reproducibility is essential when evaluating models because results can vary due to randomness in sampling or model fitting. The textbook talks about consistent evaluation when comparing models (cross validation). Thus, a fixed random seed was used to ensure reproducibility of results, consistent with best practices in resampling-based model evaluation.         
+
+Since Logistic regression is simpler and interpretable and Random Forest is more flexible and handles many predictors, two separate data sets were created to balance interpretability and predictive performance. Thus, logistic regression used a reduced feature set to mitigate multicollinearity, while machine learning models retained a richer feature space.       
+
+In addition, classification problems involve predicting qualitative (categorical) outcomes, thus, the outcome variable was encoded as a categorical factor to reflect the binary classification frame work (PD vs no PD)       
+
+## 9. Cross-Validation          
+
+```{r}
+# 5-Fold Cross-Validation Setup - Ch.5.1.3: k-Fold Cross-Validation
+# k-fold cross-validation is used to estimate test error and select tuning parameters
+ctrl <- trainControl(
+  method = "cv",
+  number = 5,
+  classProbs = TRUE,
+  summaryFunction = twoClassSummary,
+  sampling = "up",
+  savePredictions = "final"
+)
+```
+
+**Notes:**   
+Model tuning and evaluation were performed using 5-fold cross-validation. The data were split into five parts, where four parts were used to train the model and one part was used to test it, repeating this process five times. This approach provides a more reliable estimate of model performance than a single train–test split. Class probabilities were calculated to evaluate performance using AUC, sensitivity, and specificity. To handle class imbalance, up-sampling was applied during training. This method helps improve model performance and reduce overfitting.       
+
+## 10. Logistic Regression          
+
+```{r}
+# LOGISTIC REGRESSION MODEL - Ref: Chapter 4 and Chapter 6
+# Uses v2 dataset (correlation-filtered to avoid multicollinearity)
+
+# Grid for lambda tuning
+# alpha = 1 = LASSO
+# alpha = 0 = RIDGE
+glm_grid <- expand.grid(
+  alpha = c(0, 1),
+  lambda = seq(0.0001, 0.1, length = 20)
+)
+
+model_lr <- train(
+  class ~ . - id,
+  data = train_lr,
+  method = "glmnet",
+  trControl = ctrl,
+  tuneGrid = glm_grid,
+  metric = "ROC"
+)
+print(model_lr)
+```
+
+**Notes:**   
+A regularized logistic regression model was fitted using the correlation-filtered dataset to reduce multicollinearity. Both Ridge (L2) and LASSO (L1) penalties were considered, and a range of tuning parameters (lambda) was evaluated. The model was trained using cross-validation, and performance was assessed using AUC (ROC) to compare different tuning combinations.            
+
+## 11. Random Forest Model          
+
+```{r}
+# Hyper parameter Grid
+rf_grid <- expand.grid(
+  mtry = c(5, 10, 15, 20)   # number of variables tried at each split
+)
+# Ch.8.2: Bagging and Random Forests
+# Uses v1 dataset (keeps more features, better for non-linear models)
+model_rf <- train(
+  class ~ . - id,
+  data = train_ml,
+  method = "rf",
+  trControl = ctrl,
+  metric = "ROC",
+  tuneGrid = rf_grid,
+  ntree = 500,
+  importance = TRUE
+)
+# Print results
+model_rf
+```
+
+**Notes:**   
+A Random Forest model was fitted using the full feature dataset to capture non-linear relationships. Multiple values of the tuning parameter mtry were evaluated using 5-fold cross-validation. The model was built with 500 trees, and performance was assessed using AUC (ROC). Variable importance was also computed to identify key predictors.         
+
+## 12. Support Vector Machine          
+
+```{r}
+# Support vector Machine (Ref: Chapter 9)
+# Hyper parameter Grid 
+svm_grid <- expand.grid(
+  sigma = c(0.001, 0.01, 0.1),
+  C = c(0.5, 1, 2, 5)
+)
+# Ch.9.3: Support Vector Machines
+model_svm <- train(
+  class ~ . - id,
+  data = train_ml,
+  method = "svmRadial",
+  trControl = ctrl,
+  metric = "ROC",
+  tuneGrid = svm_grid
+)
+# Print results
+model_svm
+```
+
+**Notes:**   
+A Support Vector Machine with a radial kernel was used to capture non-linear relationships in the data. Multiple values of the tuning parameters (C and sigma) were evaluated using 5-fold cross-validation. Model performance was assessed using AUC (ROC) to identify the best-performing parameter combination.          
+
+## 13. Neural Network (MLP with PCA)          
+
+```{r}
+## Neural Network (MLP with PCA)
+
+# Prepare data
+x_train <- train_ml %>% select(-id, -class)
+y_train <- train_ml$class
+x_test  <- test_ml %>% select(-id)
+
+# PCA (use components explaining ~80% variance)
+pca_fit <- prcomp(x_train, center = FALSE, scale. = FALSE)
+
+pve <- 100 * (pca_fit$sdev^2 / sum(pca_fit$sdev^2))
+cum_pve <- cumsum(pve)
+n_pcs <- which(cum_pve >= 80)[1]
+
+train_pca <- data.frame(
+  class = y_train,
+  pca_fit$x[, 1:n_pcs, drop = FALSE]
+)
+
+test_pca <- data.frame(
+  predict(pca_fit, newdata = x_test)[, 1:n_pcs, drop = FALSE]
+)
+
+# Train MLP
+mlp_grid <- expand.grid(
+  size = c(3, 5, 7),
+  decay = c(0.01, 0.1, 0.5)
+)
+
+model_mlp <- train(
+  class ~ .,
+  data = train_pca,
+  method = "nnet",
+  trControl = ctrl,
+  metric = "ROC",
+  tuneGrid = mlp_grid,
+  trace = FALSE,
+  maxit = 500
+)
+# Print results
+model_mlp
+# Print results
+```
+
+**Notes:**   
+A neural network (MLP) model was trained using principal component analysis (PCA) to reduce dimensionality. Components explaining approximately 80% of the variance were used as inputs. Different network sizes and regularization parameters were evaluated using cross-validation, and model performance was assessed using AUC.      
+
+## 14. ROC Curves                    
+
+```{r}
+# ROC Curves using Cross Validated Predictions
+# Logistic
+best_lr <- model_lr$bestTune
+lr_pred <- model_lr$pred %>%
+  filter(lambda == best_lr$lambda)
+
+roc_lr <- roc(lr_pred$obs, lr_pred$PD)
+
+# RF
+best_rf <- model_rf$bestTune
+rf_pred <- model_rf$pred %>%
+  filter(mtry == best_rf$mtry)
+
+roc_rf <- roc(rf_pred$obs, rf_pred$PD)
+
+# SVM
+best_svm <- model_svm$bestTune
+svm_pred <- model_svm$pred %>%
+  filter(C == best_svm$C, sigma == best_svm$sigma)
+
+roc_svm <- roc(svm_pred$obs, svm_pred$PD)
+
+# MLP ROC
+best_mlp <- model_mlp$bestTune
+mlp_pred <- model_mlp$pred %>%
+  filter(size == best_mlp$size, decay == best_mlp$decay)
+
+roc_mlp <- roc(mlp_pred$obs, mlp_pred$PD)
+
+# Plot
+plot(roc_lr, col="blue", main="ROC Curves (Cross-Validated)")
+plot(roc_rf, col="red", add=TRUE)
+plot(roc_svm, col="green", add=TRUE)
+plot(roc_mlp, col="purple", add=TRUE)
+
+legend("bottomright",
+       legend=c("Logistic","RF","SVM","MLP"),
+       col=c("blue","red","green","purple"),
+       lwd=2)
+
+# AUC values
+cat("CV AUC - Logistic:", auc(roc_lr), "\n")
+cat("CV AUC - Random Forest:", auc(roc_rf), "\n")
+cat("CV AUC - SVM:", auc(roc_svm), "\n")
+cat("CV AUC - MLP:", auc(roc_mlp), "\n")
+```
+
+**Notes:**   
+ROC curves were generated using cross-validated predictions for each model. The best tuning parameters were selected, and predicted probabilities were used to compute ROC curves. All models were plotted together to visually compare performance. AUC values were calculated to quantify each model’s ability to distinguish between PD and non-PD cases. 
+
+**ROC/AUC Plot Interpretation**       
+The ROC curves indicate that all models achieved good classification performance, as their curves lie well above the diagonal reference line. Logistic regression, random forest, and the MLP model demonstrated the strongest performance, with curves closest to the top-left corner, indicating high sensitivity and specificity across thresholds. In contrast, the SVM model showed comparatively lower performance. Overall, logistic regression, random forest, and MLP provided similar and superior discrimination ability compared to SVM.         
+
+The similar performance across logistic regression, random forest, and MLP suggests that the underlying relationships in the data may be largely linear, with limited improvement gained from more complex non-linear models.          
+
+## 15. Model Performance Comparison (ROC and AUC)                    
+
+```{r}
+# Ch.5: Compare models using cross-validated performance
+results <- resamples(list(
+  Logistic = model_lr,
+  RF = model_rf,
+  SVM = model_svm,
+  MLP = model_mlp
+))
+summary(results)
+bwplot(results)
+# Extract and print cross-validated AUC
+cv_auc <- summary(results)$statistics$ROC[, "Mean"]
+cat("CV AUC - Logistic:", cv_auc["Logistic"], "\n")
+cat("CV AUC - Random Forest:", cv_auc["RF"], "\n")
+cat("CV AUC - SVM:", cv_auc["SVM"], "\n")
+cat("CV AUC - MLP:", cv_auc["MLP"], "\n")
+```
+
+**Notes:**   
+Model performance was compared using cross-validated AUC. The resampling results from logistic regression, random forest, SVM, and MLP models were combined and summarized. Average AUC values were extracted and compared across models, and boxplots were used to visualize performance and variability.       
+
+**Box Plot Interpretation**       
+The comparison of cross-validated performance shows that all models achieved strong overall discrimination. Logistic regression had the highest AUC, indicating the best overall ability to distinguish between PD and non-PD cases, followed by random forest. Logistic regression also demonstrated the highest sensitivity, indicating better detection of PD cases. In contrast, SVM showed high specificity but lower sensitivity, suggesting poorer identification of PD. The MLP model performed similarly to logistic regression but did not provide substantial improvement. Overall, logistic regression provides the best balance between sensitivity and specificity.           
+
+These results highlight the trade-off between sensitivity and specificity, and suggest that logistic regression is preferable in this context due to its stronger ability to detect PD cases.     
+## 16. Confusion Matrix                    
+
+```{r}
+# Ch.4.3: Evaluating classification errors
+
+# Logistic
+confusionMatrix(lr_pred$pred, lr_pred$obs)
+
+# RF
+confusionMatrix(rf_pred$pred, rf_pred$obs)
+
+# SVM
+confusionMatrix(svm_pred$pred, svm_pred$obs)
+
+# MLP
+confusionMatrix(mlp_pred$pred, mlp_pred$obs)
+```
+
+**Notes:**   
+Model performance was further evaluated using confusion matrices, which compare predicted and actual classifications. Metrics such as accuracy, sensitivity, and specificity were used to assess how well each model correctly identified PD and non-PD cases.          
+
+**Results Interpretation**       
+While all models achieved similar accuracy (from 75 to 82%), their performance differed substantially in terms of sensitivity and specificity. Logistic regression demonstrated the best overall balance, achieving the highest balanced accuracy and substantially higher sensitivity compared to the other models. The MLP model showed moderate performance, with improved sensitivity compared to random forest and SVM, but still lower than logistic regression. In contrast, random forest and SVM achieved higher specificity but much lower sensitivity, indicating poorer detection of PD cases. Given the clinical importance of identifying PD, logistic regression is the preferred model. These results highlight that accuracy alone can be misleading in imbalanced classification problems, as models with high specificity but low sensitivity may fail to detect clinically important cases.          
+
+## 17. Performance Metrics                    
+
+```{r}
+# Combined Performance Metrics
+get_metrics <- function(pred, obs, roc_obj, model_name) {
+  
+  cm <- confusionMatrix(pred, obs, positive = "PD")
+  
+  precision <- cm$byClass["Pos Pred Value"]
+  recall <- cm$byClass["Sensitivity"]
+  
+  f1 <- 2 * precision * recall / (precision + recall)
+  
+  data.frame(
+    Model = model_name,
+    AUC = as.numeric(auc(roc_obj)),
+    Accuracy = as.numeric(cm$overall["Accuracy"]),
+    Sensitivity = as.numeric(recall),
+    Specificity = as.numeric(cm$byClass["Specificity"]),
+    Precision = as.numeric(precision),
+    F1 = as.numeric(f1)
+  )
+}
+
+# Apply to all models
+metrics_lr  <- get_metrics(lr_pred$pred, lr_pred$obs, roc_lr, "Logistic")
+metrics_rf  <- get_metrics(rf_pred$pred, rf_pred$obs, roc_rf, "RF")
+metrics_svm <- get_metrics(svm_pred$pred, svm_pred$obs, roc_svm, "SVM")
+metrics_mlp <- get_metrics(mlp_pred$pred, mlp_pred$obs, roc_mlp, "MLP")
+
+# Combine
+all_metrics <- rbind(metrics_lr, metrics_rf, metrics_svm, metrics_mlp)
+all_metrics
+```
+
+**Results Interpretation**       
+Logistic regression performed best overall with the highest AUC and a strong balance of sensitivity and specificity. Random forest and SVM had higher specificity but much lower sensitivity, meaning they missed more PD cases. The MLP showed moderate performance but did not outperform logistic regression.      
+
+## 18. Variable Importance                    
+
+```{r}
+# Ch.8: Feature importance in tree-based models
+varImp_rf <- varImp(model_rf)
+plot(varImp_rf, top = 20)
+```
+
+**Notes:**   
+Variable importance was assessed using the Random Forest model. The most important predictors were identified based on their contribution to improving model accuracy, and the top 20 variables were visualized.      
+
+**Results Interpretation**       
+As outlined in the figure, the important predictors are primarily related to variability (standard deviation) and temporal changes (delta features) in voice signals. This suggests that instability and dynamic changes in speech are key indicators of Parkinson’s disease. While multiple variables contribute to prediction, the model relies more heavily on a smaller group of these highly informative features.        
+The dominance of variability-based features highlights the importance of capturing temporal fluctuations in speech, which are characteristic of neurological impairment in Parkinson’s disease.            
+
+## 19. Threshold Analysis - Comparing Multiple Thresholds                    
+
+```{r}
+# Threshold grid evaluation
+# Probabilities and true labels
+prob_rf <- rf_pred$PD
+true_class <- rf_pred$obs
+
+thresholds <- seq(0.1, 0.9, by = 0.05)
+
+results_thresh <- data.frame()
+
+for (t in thresholds) {
+  
+  pred <- ifelse(prob_rf > t, "PD", "NoPD")
+  pred <- factor(pred, levels = c("NoPD","PD"))
+  
+  cm <- confusionMatrix(pred, true_class)
+  
+  results_thresh <- rbind(results_thresh, data.frame(
+    threshold = t,
+    sensitivity = cm$byClass["Sensitivity"],
+    specificity = cm$byClass["Specificity"]
+  ))
+}
+
+results_thresh
+# Plotting Trade-off Curve
+library(ggplot2)
+library(tidyr)
+
+results_thresh %>%
+  pivot_longer(cols = c(sensitivity, specificity)) %>%
+  ggplot(aes(x = threshold, y = value, color = name)) +
+  geom_line(size = 1.2) +
+  labs(title = "Sensitivity vs Specificity Trade-off (CV)",
+       y = "Metric",
+       color = "") +
+  theme_bw()
+```
+
+**Notes:**   
+Different probability thresholds were evaluated to examine the trade-off between sensitivity and specificity. Lower thresholds increased sensitivity by classifying more observations as positive, but this reduced specificity due to more false positives. Conversely, higher thresholds improved specificity at the cost of sensitivity. This analysis shows that model performance depends not only on the model itself but also on the chosen classification threshold, which should be selected based on the clinical importance of false positives versus false negatives.     
+**Results Interpretation**       
+The sensitivity–specificity plot demonstrates a clear trade-off between the two metrics as the classification threshold varies. Lower thresholds increase sensitivity but reduce specificity, while higher thresholds improve specificity at the expense of sensitivity. A threshold around 0.65–0.7 provides a reasonable balance between the two, although the optimal choice depends on the clinical importance of detecting PD versus avoiding false positives. These results highlight that model performance is not fixed and can be adjusted through threshold selection to align with clinical priorities.      
+
+## 20. Final Model and Predictions                    
+
+```{r}
+# Final Predictions - Submission File
+final_model <- model_rf
+test_pred <- predict(final_model, test_ml)
+submission <- data.frame(
+  id = test_ml$id,
+  predicted_class = test_pred
+)
+write.csv(submission, "Kooner_Hu_Akter_predictions.csv", row.names = FALSE)
+```
+
+
+
+
+
+
