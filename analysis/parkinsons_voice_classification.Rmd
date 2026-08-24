@@ -1,6 +1,6 @@
 ---
 title: "Predicting Parkinson's Disease Using Voice Recordings"
-author: "Parminder Singh Kooner, Huiying Hu, Syeda Akter"
+author: "Parminder Singh Kooner"
 date: "2026"
 output:
   html_document:
