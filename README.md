@@ -99,6 +99,16 @@ parkinsons-voice-classification/
 ├── install_packages.R
 └── .gitignore
 ```
+## Repository Navigation
+
+- [View the full R Markdown analysis](analysis/parkinsons_voice_classification.Rmd)
+- [View the data directory](data/)
+- [Read the data documentation](data/README.md)
+- [View the training dataset](data/pd_speech_features_trainPh1976.csv)
+- [View the held-out test dataset](data/pd_speech_features_test_with-no-label_Ph1976.csv)
+- [View the final prediction file](outputs/predictions.csv)
+- [View the final project report](docs/final_project_report.pdf)
+- [View the package installation script](install_packages.R)
 
 ## Data
 
