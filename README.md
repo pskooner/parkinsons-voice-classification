@@ -202,7 +202,7 @@ Several limitations should be considered when interpreting the results:
 
 Therefore, the models should be interpreted as an applied statistical-learning exercise rather than as clinically validated diagnostic tools.
 
-## Authors
+## Author
 
 - **Parminder Singh Kooner**
 
